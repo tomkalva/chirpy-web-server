@@ -1,0 +1,13 @@
+# compiled binaries
+out
+*.exe
+
+# test cache
+*.test
+
+# environment variables
+.env
+
+# editor/OS files
+.DS_Store
+.vscode/

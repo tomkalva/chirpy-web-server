@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -47,6 +48,72 @@ func main() {
 	mux.HandleFunc("POST /admin/reset", func(w http.ResponseWriter, r *http.Request) {
 		apiCfg.fileserverHits.Store(0)
 		w.Write([]byte("OK"))
+	})
+
+	mux.HandleFunc("POST /api/validate_chirp", func(w http.ResponseWriter, r *http.Request) {
+		type parameters struct {
+			Body string `json:"body"`
+		}
+
+		type returnVals struct {
+			Valid bool `json:"valid"`
+		}
+
+		type errorResponse struct {
+			Error string `json:"error"`
+		}
+
+		decoder := json.NewDecoder(r.Body)
+		params := parameters{}
+		err := decoder.Decode(&params)
+		if err != nil {
+			respBody := errorResponse{
+				Error: "Error decoding parameters",
+			}
+
+			dat, err := json.Marshal(respBody)
+			if err != nil {
+				log.Printf("Error marshaling: %s", err)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(500)
+			w.Write(dat)
+
+			return
+		}
+		if len(params.Body) > 140 {
+			respBody := errorResponse{
+				Error: "Chirp is too long",
+			}
+
+			dat, err := json.Marshal(respBody)
+			if err != nil {
+				log.Printf("Error marshaling: %s", err)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(400)
+			w.Write(dat)
+
+			return
+		}
+		respBody := returnVals{
+			Valid: true,
+		}
+
+		dat, err := json.Marshal(respBody)
+		if err != nil {
+			log.Printf("Error marshaling: %s", err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write(dat)
+
 	})
 
 	handler := http.StripPrefix("/app", http.FileServer(http.Dir(filepathRoot)))

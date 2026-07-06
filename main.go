@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync/atomic"
 )
 
@@ -17,6 +18,20 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 		cfg.fileserverHits.Add(1)
 		next.ServeHTTP(w, r)
 	})
+}
+
+func replaceBadWords(body string) string {
+	badWords := []string{"kerfuffle", "sharbert", "fornax"}
+
+	words := strings.Split(body, " ")
+	for i, word := range words {
+		for _, badWord := range badWords {
+			if strings.ToLower(word) == badWord {
+				words[i] = "****"
+			}
+		}
+	}
+	return strings.Join(words, " ")
 }
 
 func main() {
@@ -56,7 +71,7 @@ func main() {
 		}
 
 		type returnVals struct {
-			Valid bool `json:"valid"`
+			CleanedBody string `json:"cleaned_body"`
 		}
 
 		type errorResponse struct {
@@ -100,8 +115,11 @@ func main() {
 
 			return
 		}
+
+		cleanedString := replaceBadWords(params.Body)
+
 		respBody := returnVals{
-			Valid: true,
+			CleanedBody: cleanedString,
 		}
 
 		dat, err := json.Marshal(respBody)

@@ -9,7 +9,9 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 	"github.com/tomkalva/chirpy-web-server/internal/database"
@@ -18,6 +20,14 @@ import (
 type apiConfig struct {
 	fileserverHits atomic.Int32
 	dbQueries      *database.Queries
+	platform       string
+}
+
+type User struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email     string    `json:"email"`
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -50,12 +60,14 @@ func main() {
 		return
 	}
 	dbQueries := database.New(db)
+	platform := os.Getenv("PLATFORM")
 
 	const filepathRoot = "."
 	const port = "8080"
 
 	apiCfg := apiConfig{
 		dbQueries: dbQueries,
+		platform:  platform,
 	}
 
 	mux := http.NewServeMux()
@@ -79,8 +91,74 @@ func main() {
 	})
 
 	mux.HandleFunc("POST /admin/reset", func(w http.ResponseWriter, r *http.Request) {
+		if apiCfg.platform != "dev" {
+			w.WriteHeader(403)
+			return
+		}
+		err := apiCfg.dbQueries.DeleteAllUsers(r.Context())
+		if err != nil {
+			log.Printf("Error with DeleteAllUsers: %s", err)
+			return
+		}
+
 		apiCfg.fileserverHits.Store(0)
 		w.Write([]byte("OK"))
+	})
+
+	mux.HandleFunc("POST /api/users", func(w http.ResponseWriter, r *http.Request) {
+		type parameters struct {
+			Email string `json:"email"`
+		}
+
+		type errorResponse struct {
+			Error string `json:"error"`
+		}
+
+		decoder := json.NewDecoder(r.Body)
+		params := parameters{}
+		err := decoder.Decode(&params)
+		if err != nil {
+			respBody := errorResponse{
+				Error: "Error decoding parameters",
+			}
+
+			dat, err := json.Marshal(respBody)
+			if err != nil {
+				log.Printf("Error marshaling: %s", err)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(500)
+			w.Write(dat)
+
+			return
+		}
+
+		user, err := apiCfg.dbQueries.CreateUser(r.Context(), params.Email)
+		if err != nil {
+			log.Printf("Error creating user: %s", err)
+			return
+		}
+
+		respBody := User{
+			ID:        user.ID,
+			CreatedAt: user.CreatedAt,
+			UpdatedAt: user.UpdatedAt,
+			Email:     user.Email,
+		}
+
+		dat, err := json.Marshal(respBody)
+		if err != nil {
+			log.Printf("Error marshaling: %s", err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(201)
+		w.Write(dat)
+
+		return
 	})
 
 	mux.HandleFunc("POST /api/validate_chirp", func(w http.ResponseWriter, r *http.Request) {

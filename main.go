@@ -30,6 +30,14 @@ type User struct {
 	Email     string    `json:"email"`
 }
 
+type Chirp struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Body      string    `json:"body"`
+	UserID    uuid.UUID `json:"user_id"`
+}
+
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cfg.fileserverHits.Add(1)
@@ -161,9 +169,10 @@ func main() {
 		return
 	})
 
-	mux.HandleFunc("POST /api/validate_chirp", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/chirps", func(w http.ResponseWriter, r *http.Request) {
 		type parameters struct {
-			Body string `json:"body"`
+			Body   string `json:"body"`
+			UserID string `json:"user_id"`
 		}
 
 		type returnVals struct {
@@ -213,9 +222,28 @@ func main() {
 		}
 
 		cleanedString := replaceBadWords(params.Body)
+		uuid, err := uuid.Parse(params.UserID)
+		if err != nil {
+			fmt.Println("Invalid UUID:", err)
+			return
+		}
 
-		respBody := returnVals{
-			CleanedBody: cleanedString,
+		chirp, err := apiCfg.dbQueries.CreateChirp(r.Context(),
+			database.CreateChirpParams{
+				Body:   cleanedString,
+				UserID: uuid,
+			})
+		if err != nil {
+			log.Printf("Error creating chirp: %s", err)
+			return
+		}
+
+		respBody := Chirp{
+			ID:        chirp.ID,
+			CreatedAt: chirp.CreatedAt,
+			UpdatedAt: chirp.UpdatedAt,
+			Body:      chirp.Body,
+			UserID:    chirp.UserID,
 		}
 
 		dat, err := json.Marshal(respBody)
@@ -225,9 +253,10 @@ func main() {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(200)
+		w.WriteHeader(201)
 		w.Write(dat)
 
+		return
 	})
 
 	handler := http.StripPrefix("/app", http.FileServer(http.Dir(filepathRoot)))

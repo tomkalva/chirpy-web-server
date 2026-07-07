@@ -165,8 +165,6 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(201)
 		w.Write(dat)
-
-		return
 	})
 
 	mux.HandleFunc("POST /api/chirps", func(w http.ResponseWriter, r *http.Request) {
@@ -255,8 +253,37 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(201)
 		w.Write(dat)
+	})
 
-		return
+	mux.HandleFunc("GET /api/chirps", func(w http.ResponseWriter, r *http.Request) {
+		chirps, err := apiCfg.dbQueries.RetrieveAllChirps(r.Context())
+		if err != nil {
+			log.Printf("Error retrieving chirps: %s", err)
+			return
+		}
+		chirpArray := make([]Chirp, 0, len(chirps))
+
+		for _, chirp := range chirps {
+			respBody := Chirp{
+				ID:        chirp.ID,
+				CreatedAt: chirp.CreatedAt,
+				UpdatedAt: chirp.UpdatedAt,
+				Body:      chirp.Body,
+				UserID:    chirp.UserID,
+			}
+
+			chirpArray = append(chirpArray, respBody)
+		}
+
+		dat, err := json.Marshal(chirpArray)
+		if err != nil {
+			log.Printf("Error marshaling: %s", err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write(dat)
 	})
 
 	handler := http.StripPrefix("/app", http.FileServer(http.Dir(filepathRoot)))

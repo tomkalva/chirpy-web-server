@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
+	"github.com/tomkalva/chirpy-web-server/internal/auth"
 	"github.com/tomkalva/chirpy-web-server/internal/database"
 )
 
@@ -115,7 +116,8 @@ func main() {
 
 	mux.HandleFunc("POST /api/users", func(w http.ResponseWriter, r *http.Request) {
 		type parameters struct {
-			Email string `json:"email"`
+			Password string `json:"password"`
+			Email    string `json:"email"`
 		}
 
 		type errorResponse struct {
@@ -143,7 +145,17 @@ func main() {
 			return
 		}
 
-		user, err := apiCfg.dbQueries.CreateUser(r.Context(), params.Email)
+		hashedPassword, err := auth.HashPassword(params.Password)
+		if err != nil {
+			log.Printf("Error hashing password: %s", err)
+			return
+		}
+
+		user, err := apiCfg.dbQueries.CreateUser(r.Context(),
+			database.CreateUserParams{
+				Email:          params.Email,
+				HashedPassword: hashedPassword,
+			})
 		if err != nil {
 			log.Printf("Error creating user: %s", err)
 			return
@@ -313,6 +325,7 @@ func main() {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(404)
 			w.Write(dat)
+			return
 		}
 
 		respBody := Chirp{
@@ -321,6 +334,93 @@ func main() {
 			UpdatedAt: chirp.UpdatedAt,
 			Body:      chirp.Body,
 			UserID:    chirp.UserID,
+		}
+
+		dat, err := json.Marshal(respBody)
+		if err != nil {
+			log.Printf("Error marshaling: %s", err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write(dat)
+	})
+
+	mux.HandleFunc("POST /api/login", func(w http.ResponseWriter, r *http.Request) {
+		type parameters struct {
+			Password string `json:"password"`
+			Email    string `json:"email"`
+		}
+
+		type errorResponse struct {
+			Error string `json:"error"`
+		}
+
+		decoder := json.NewDecoder(r.Body)
+		params := parameters{}
+		err := decoder.Decode(&params)
+		if err != nil {
+			respBody := errorResponse{
+				Error: "Error decoding parameters",
+			}
+
+			dat, err := json.Marshal(respBody)
+			if err != nil {
+				log.Printf("Error marshaling: %s", err)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(500)
+			w.Write(dat)
+
+			return
+		}
+
+		user, err := apiCfg.dbQueries.GetUserByEmail(r.Context(), params.Email)
+		if err != nil {
+			respBody := errorResponse{
+				Error: "Incorrect email or password",
+			}
+
+			dat, err := json.Marshal(respBody)
+			if err != nil {
+				log.Printf("Error marshaling: %s", err)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(401)
+			w.Write(dat)
+
+			return
+		}
+
+		match, err := auth.CheckPasswordHash(params.Password, user.HashedPassword)
+		if err != nil || match == false {
+			respBody := errorResponse{
+				Error: "Incorrect email or password",
+			}
+
+			dat, err := json.Marshal(respBody)
+			if err != nil {
+				log.Printf("Error marshaling: %s", err)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(401)
+			w.Write(dat)
+
+			return
+		}
+
+		respBody := User{
+			ID:        user.ID,
+			CreatedAt: user.CreatedAt,
+			UpdatedAt: user.UpdatedAt,
+			Email:     user.Email,
 		}
 
 		dat, err := json.Marshal(respBody)

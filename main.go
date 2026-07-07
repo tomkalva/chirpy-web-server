@@ -286,6 +286,54 @@ func main() {
 		w.Write(dat)
 	})
 
+	mux.HandleFunc("GET /api/chirps/{chirpID}", func(w http.ResponseWriter, r *http.Request) {
+		type errorResponse struct {
+			Error string `json:"error"`
+		}
+
+		path := r.PathValue("chirpID")
+		uuid, err := uuid.Parse(path)
+		if err != nil {
+			fmt.Println("Invalid UUID:", err)
+			return
+		}
+
+		chirp, err := apiCfg.dbQueries.GetChirpByID(r.Context(), uuid)
+		if err != nil {
+			respBody := errorResponse{
+				Error: "Chirp not found",
+			}
+
+			dat, err := json.Marshal(respBody)
+			if err != nil {
+				log.Printf("Error marshaling: %s", err)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(404)
+			w.Write(dat)
+		}
+
+		respBody := Chirp{
+			ID:        chirp.ID,
+			CreatedAt: chirp.CreatedAt,
+			UpdatedAt: chirp.UpdatedAt,
+			Body:      chirp.Body,
+			UserID:    chirp.UserID,
+		}
+
+		dat, err := json.Marshal(respBody)
+		if err != nil {
+			log.Printf("Error marshaling: %s", err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write(dat)
+	})
+
 	handler := http.StripPrefix("/app", http.FileServer(http.Dir(filepathRoot)))
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(handler))
 

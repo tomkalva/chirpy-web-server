@@ -22,6 +22,7 @@ type apiConfig struct {
 	fileserverHits atomic.Int32
 	dbQueries      *database.Queries
 	platform       string
+	jwtsecret      string
 }
 
 type User struct {
@@ -29,6 +30,7 @@ type User struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Email     string    `json:"email"`
+	Token     string    `json:"token"`
 }
 
 type Chirp struct {
@@ -70,14 +72,16 @@ func main() {
 	}
 	dbQueries := database.New(db)
 	platform := os.Getenv("PLATFORM")
-
-	const filepathRoot = "."
-	const port = "8080"
+	jwtsecret := os.Getenv("JWTSecret")
 
 	apiCfg := apiConfig{
 		dbQueries: dbQueries,
 		platform:  platform,
+		jwtsecret: jwtsecret,
 	}
+
+	const filepathRoot = "."
+	const port = "8080"
 
 	mux := http.NewServeMux()
 
@@ -181,8 +185,7 @@ func main() {
 
 	mux.HandleFunc("POST /api/chirps", func(w http.ResponseWriter, r *http.Request) {
 		type parameters struct {
-			Body   string `json:"body"`
-			UserID string `json:"user_id"`
+			Body string `json:"body"`
 		}
 
 		type returnVals struct {
@@ -213,6 +216,45 @@ func main() {
 
 			return
 		}
+
+		bearerToken, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			respBody := errorResponse{
+				Error: "Unauthorized",
+			}
+
+			dat, err := json.Marshal(respBody)
+			if err != nil {
+				log.Printf("Error marshaling: %s", err)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(401)
+			w.Write(dat)
+
+			return
+		}
+
+		id, err := auth.ValidateJWT(bearerToken, apiCfg.jwtsecret)
+		if err != nil {
+			respBody := errorResponse{
+				Error: "Unauthorized",
+			}
+
+			dat, err := json.Marshal(respBody)
+			if err != nil {
+				log.Printf("Error marshaling: %s", err)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(401)
+			w.Write(dat)
+
+			return
+		}
+
 		if len(params.Body) > 140 {
 			respBody := errorResponse{
 				Error: "Chirp is too long",
@@ -232,16 +274,11 @@ func main() {
 		}
 
 		cleanedString := replaceBadWords(params.Body)
-		uuid, err := uuid.Parse(params.UserID)
-		if err != nil {
-			fmt.Println("Invalid UUID:", err)
-			return
-		}
 
 		chirp, err := apiCfg.dbQueries.CreateChirp(r.Context(),
 			database.CreateChirpParams{
 				Body:   cleanedString,
-				UserID: uuid,
+				UserID: id,
 			})
 		if err != nil {
 			log.Printf("Error creating chirp: %s", err)
@@ -349,8 +386,9 @@ func main() {
 
 	mux.HandleFunc("POST /api/login", func(w http.ResponseWriter, r *http.Request) {
 		type parameters struct {
-			Password string `json:"password"`
-			Email    string `json:"email"`
+			Password         string `json:"password"`
+			Email            string `json:"email"`
+			ExpiresInSeconds int    `json:"expires_in_seconds"`
 		}
 
 		type errorResponse struct {
@@ -416,11 +454,23 @@ func main() {
 			return
 		}
 
+		if 3600 < params.ExpiresInSeconds || params.ExpiresInSeconds < 1 {
+			params.ExpiresInSeconds = 3600
+		}
+		expiresIn := time.Duration(params.ExpiresInSeconds) * time.Second
+
+		jwtToken, err := auth.MakeJWT(user.ID, apiCfg.jwtsecret, expiresIn)
+		if err != nil {
+			log.Printf("Error making jwt: %s", err)
+			return
+		}
+
 		respBody := User{
 			ID:        user.ID,
 			CreatedAt: user.CreatedAt,
 			UpdatedAt: user.UpdatedAt,
 			Email:     user.Email,
+			Token:     jwtToken,
 		}
 
 		dat, err := json.Marshal(respBody)

@@ -26,11 +26,12 @@ type apiConfig struct {
 }
 
 type User struct {
-	ID        uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Email     string    `json:"email"`
-	Token     string    `json:"token"`
+	ID           uuid.UUID `json:"id"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Email        string    `json:"email"`
+	Token        string    `json:"token"`
+	RefreshToken string    `json:"refresh_token"`
 }
 
 type Chirp struct {
@@ -386,9 +387,8 @@ func main() {
 
 	mux.HandleFunc("POST /api/login", func(w http.ResponseWriter, r *http.Request) {
 		type parameters struct {
-			Password         string `json:"password"`
-			Email            string `json:"email"`
-			ExpiresInSeconds int    `json:"expires_in_seconds"`
+			Password string `json:"password"`
+			Email    string `json:"email"`
 		}
 
 		type errorResponse struct {
@@ -454,10 +454,7 @@ func main() {
 			return
 		}
 
-		if 3600 < params.ExpiresInSeconds || params.ExpiresInSeconds < 1 {
-			params.ExpiresInSeconds = 3600
-		}
-		expiresIn := time.Duration(params.ExpiresInSeconds) * time.Second
+		expiresIn := time.Duration(3600) * time.Second
 
 		jwtToken, err := auth.MakeJWT(user.ID, apiCfg.jwtsecret, expiresIn)
 		if err != nil {
@@ -465,12 +462,30 @@ func main() {
 			return
 		}
 
+		rToken, err := auth.MakeRefreshToken()
+		if err != nil {
+			log.Printf("Error making refreshToken: %s", err)
+			return
+		}
+
+		refreshToken, err := apiCfg.dbQueries.CreateRefreshToken(r.Context(),
+			database.CreateRefreshTokenParams{
+				Token:     rToken,
+				UserID:    user.ID,
+				ExpiresAt: time.Now().Add(time.Hour * 24 * 60),
+			})
+		if err != nil {
+			log.Printf("Error creating refreshToken: %s", err)
+			return
+		}
+
 		respBody := User{
-			ID:        user.ID,
-			CreatedAt: user.CreatedAt,
-			UpdatedAt: user.UpdatedAt,
-			Email:     user.Email,
-			Token:     jwtToken,
+			ID:           user.ID,
+			CreatedAt:    user.CreatedAt,
+			UpdatedAt:    user.UpdatedAt,
+			Email:        user.Email,
+			Token:        jwtToken,
+			RefreshToken: refreshToken.Token,
 		}
 
 		dat, err := json.Marshal(respBody)
@@ -482,6 +497,121 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
 		w.Write(dat)
+	})
+
+	mux.HandleFunc("POST /api/refresh", func(w http.ResponseWriter, r *http.Request) {
+		type errorResponse struct {
+			Error string `json:"error"`
+		}
+
+		type returnVals struct {
+			Token string `json:"token"`
+		}
+
+		bearerToken, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			respBody := errorResponse{
+				Error: "Error getting bearerToken",
+			}
+
+			dat, err := json.Marshal(respBody)
+			if err != nil {
+				log.Printf("Error marshaling: %s", err)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(401)
+			w.Write(dat)
+
+			return
+		}
+		user, err := apiCfg.dbQueries.GetUserFromRefreshToken(r.Context(), bearerToken)
+		if err != nil {
+			respBody := errorResponse{
+				Error: "Refresh token doesn't exist, expired or revoked",
+			}
+
+			dat, err := json.Marshal(respBody)
+			if err != nil {
+				log.Printf("Error marshaling: %s", err)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(401)
+			w.Write(dat)
+
+			return
+		}
+
+		expiresIn := time.Duration(3600) * time.Second
+
+		jwtToken, err := auth.MakeJWT(user.ID, apiCfg.jwtsecret, expiresIn)
+		if err != nil {
+			log.Printf("Error making jwt: %s", err)
+			return
+		}
+
+		respBody := returnVals{
+			Token: jwtToken,
+		}
+
+		dat, err := json.Marshal(respBody)
+		if err != nil {
+			log.Printf("Error marshaling: %s", err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write(dat)
+	})
+
+	mux.HandleFunc("POST /api/revoke", func(w http.ResponseWriter, r *http.Request) {
+		type errorResponse struct {
+			Error string `json:"error"`
+		}
+
+		bearerToken, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			respBody := errorResponse{
+				Error: "Error getting bearerToken",
+			}
+
+			dat, err := json.Marshal(respBody)
+			if err != nil {
+				log.Printf("Error marshaling: %s", err)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(401)
+			w.Write(dat)
+
+			return
+		}
+
+		err = apiCfg.dbQueries.RevokeRefreshToken(r.Context(), bearerToken)
+		if err != nil {
+			respBody := errorResponse{
+				Error: "Error revokeing refreshToken",
+			}
+
+			dat, err := json.Marshal(respBody)
+			if err != nil {
+				log.Printf("Error marshaling: %s", err)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(401)
+			w.Write(dat)
+
+			return
+		}
+
+		w.WriteHeader(204)
 	})
 
 	handler := http.StripPrefix("/app", http.FileServer(http.Dir(filepathRoot)))

@@ -438,11 +438,29 @@ func main() {
 	})
 
 	mux.HandleFunc("GET /api/chirps", func(w http.ResponseWriter, r *http.Request) {
-		chirps, err := apiCfg.dbQueries.RetrieveAllChirps(r.Context())
-		if err != nil {
-			log.Printf("Error retrieving chirps: %s", err)
-			return
+		var chirps []database.Chirp
+
+		authorId := r.URL.Query().Get("author_id")
+		if authorId == "" {
+			chirps, err = apiCfg.dbQueries.RetrieveAllChirps(r.Context())
+			if err != nil {
+				log.Printf("Error retrieving chirps: %s", err)
+				return
+			}
+		} else {
+			uuid, err := uuid.Parse(authorId)
+			if err != nil {
+				fmt.Println("Invalid UUID:", err)
+				return
+			}
+
+			chirps, err = apiCfg.dbQueries.RetrieveAllChirpsByAuthor(r.Context(), uuid)
+			if err != nil {
+				log.Printf("Error retrieving chirps: %s", err)
+				return
+			}
 		}
+
 		chirpArray := make([]Chirp, 0, len(chirps))
 
 		for _, chirp := range chirps {

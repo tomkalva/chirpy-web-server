@@ -32,6 +32,7 @@ type User struct {
 	Email        string    `json:"email"`
 	Token        string    `json:"token"`
 	RefreshToken string    `json:"refresh_token"`
+	IsChirpyRed  bool      `json:"is_chirpy_red"`
 }
 
 type Chirp struct {
@@ -167,10 +168,11 @@ func main() {
 		}
 
 		respBody := User{
-			ID:        user.ID,
-			CreatedAt: user.CreatedAt,
-			UpdatedAt: user.UpdatedAt,
-			Email:     user.Email,
+			ID:          user.ID,
+			CreatedAt:   user.CreatedAt,
+			UpdatedAt:   user.UpdatedAt,
+			Email:       user.Email,
+			IsChirpyRed: user.IsChirpyRed,
 		}
 
 		dat, err := json.Marshal(respBody)
@@ -297,10 +299,11 @@ func main() {
 		}
 
 		respBody := User{
-			ID:        updatedUser.ID,
-			CreatedAt: updatedUser.CreatedAt,
-			UpdatedAt: updatedUser.UpdatedAt,
-			Email:     updatedUser.Email,
+			ID:          updatedUser.ID,
+			CreatedAt:   updatedUser.CreatedAt,
+			UpdatedAt:   updatedUser.UpdatedAt,
+			Email:       updatedUser.Email,
+			IsChirpyRed: updatedUser.IsChirpyRed,
 		}
 
 		dat, err := json.Marshal(respBody)
@@ -616,6 +619,7 @@ func main() {
 			Email:        user.Email,
 			Token:        jwtToken,
 			RefreshToken: refreshToken.Token,
+			IsChirpyRed:  user.IsChirpyRed,
 		}
 
 		dat, err := json.Marshal(respBody)
@@ -847,6 +851,72 @@ func main() {
 
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(403)
+			w.Write(dat)
+
+			return
+		}
+
+		w.WriteHeader(204)
+	})
+
+	mux.HandleFunc("POST /api/polka/webhooks", func(w http.ResponseWriter, r *http.Request) {
+		type parameters struct {
+			Event string `json:"event"`
+			Data  struct {
+				UserID string `json:"user_id"`
+			} `json:"data"`
+		}
+
+		type errorResponse struct {
+			Error string `json:"error"`
+		}
+
+		decoder := json.NewDecoder(r.Body)
+		params := parameters{}
+		err := decoder.Decode(&params)
+		if err != nil {
+			respBody := errorResponse{
+				Error: "Error decoding parameters",
+			}
+
+			dat, err := json.Marshal(respBody)
+			if err != nil {
+				log.Printf("Error marshaling: %s", err)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(500)
+			w.Write(dat)
+
+			return
+		}
+
+		if params.Event != "user.upgraded" {
+			w.WriteHeader(204)
+			return
+		}
+
+		uuid, err := uuid.Parse(params.Data.UserID)
+		if err != nil {
+			fmt.Println("Invalid UUID:", err)
+			return
+		}
+
+		err = apiCfg.dbQueries.UpgradeUserToChirpyRed(r.Context(), uuid)
+		if err != nil {
+			respBody := errorResponse{
+				Error: "Error upgrading user",
+			}
+
+			dat, err := json.Marshal(respBody)
+			if err != nil {
+				log.Printf("Error marshaling: %s", err)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(404)
 			w.Write(dat)
 
 			return

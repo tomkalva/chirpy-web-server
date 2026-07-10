@@ -744,6 +744,117 @@ func main() {
 		w.WriteHeader(204)
 	})
 
+	mux.HandleFunc("DELETE /api/chirps/{chirpID}", func(w http.ResponseWriter, r *http.Request) {
+		type errorResponse struct {
+			Error string `json:"error"`
+		}
+
+		bearerToken, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			respBody := errorResponse{
+				Error: "Unauthorized",
+			}
+
+			dat, err := json.Marshal(respBody)
+			if err != nil {
+				log.Printf("Error marshaling: %s", err)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(401)
+			w.Write(dat)
+
+			return
+		}
+
+		userId, err := auth.ValidateJWT(bearerToken, apiCfg.jwtsecret)
+		if err != nil {
+			respBody := errorResponse{
+				Error: "Unauthorized",
+			}
+
+			dat, err := json.Marshal(respBody)
+			if err != nil {
+				log.Printf("Error marshaling: %s", err)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(401)
+			w.Write(dat)
+
+			return
+		}
+
+		path := r.PathValue("chirpID")
+		chirpUuid, err := uuid.Parse(path)
+		if err != nil {
+			fmt.Println("Invalid UUID:", err)
+			return
+		}
+
+		chirp, err := apiCfg.dbQueries.GetChirpByID(r.Context(), chirpUuid)
+		if err != nil {
+			respBody := errorResponse{
+				Error: "Chirp not found",
+			}
+
+			dat, err := json.Marshal(respBody)
+			if err != nil {
+				log.Printf("Error marshaling: %s", err)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(404)
+			w.Write(dat)
+			return
+		}
+		if chirp.UserID != userId {
+			respBody := errorResponse{
+				Error: "Unauthorized",
+			}
+
+			dat, err := json.Marshal(respBody)
+			if err != nil {
+				log.Printf("Error marshaling: %s", err)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(403)
+			w.Write(dat)
+
+			return
+		}
+
+		err = apiCfg.dbQueries.DeleteChirp(r.Context(),
+			database.DeleteChirpParams{
+				ID:     chirp.ID,
+				UserID: userId,
+			})
+		if err != nil {
+			respBody := errorResponse{
+				Error: "Error deleting chirp",
+			}
+
+			dat, err := json.Marshal(respBody)
+			if err != nil {
+				log.Printf("Error marshaling: %s", err)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(403)
+			w.Write(dat)
+
+			return
+		}
+
+		w.WriteHeader(204)
+	})
+
 	handler := http.StripPrefix("/app", http.FileServer(http.Dir(filepathRoot)))
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(handler))
 

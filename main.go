@@ -23,6 +23,7 @@ type apiConfig struct {
 	dbQueries      *database.Queries
 	platform       string
 	jwtsecret      string
+	polkaKey       string
 }
 
 type User struct {
@@ -72,14 +73,12 @@ func main() {
 		log.Printf("Error opening DB: %s", err)
 		return
 	}
-	dbQueries := database.New(db)
-	platform := os.Getenv("PLATFORM")
-	jwtsecret := os.Getenv("JWTSecret")
 
 	apiCfg := apiConfig{
-		dbQueries: dbQueries,
-		platform:  platform,
-		jwtsecret: jwtsecret,
+		dbQueries: database.New(db),
+		platform:  os.Getenv("PLATFORM"),
+		jwtsecret: os.Getenv("JWTSecret"),
+		polkaKey:  os.Getenv("POLKA_KEY"),
 	}
 
 	const filepathRoot = "."
@@ -871,9 +870,21 @@ func main() {
 			Error string `json:"error"`
 		}
 
+		key, err := auth.GetAPIKey(r.Header)
+		if err != nil {
+			fmt.Println(err)
+			w.WriteHeader(401)
+			return
+		}
+
+		if key != apiCfg.polkaKey {
+			w.WriteHeader(401)
+			return
+		}
+
 		decoder := json.NewDecoder(r.Body)
 		params := parameters{}
-		err := decoder.Decode(&params)
+		err = decoder.Decode(&params)
 		if err != nil {
 			respBody := errorResponse{
 				Error: "Error decoding parameters",
@@ -900,6 +911,7 @@ func main() {
 		uuid, err := uuid.Parse(params.Data.UserID)
 		if err != nil {
 			fmt.Println("Invalid UUID:", err)
+			w.WriteHeader(404)
 			return
 		}
 

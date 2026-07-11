@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -473,6 +474,14 @@ func main() {
 			}
 
 			chirpArray = append(chirpArray, respBody)
+		}
+
+		sortOrder := r.URL.Query().Get("sort")
+
+		if sortOrder == "desc" {
+			sort.Slice(chirpArray, func(i, j int) bool { return chirpArray[i].CreatedAt.After(chirpArray[j].CreatedAt) })
+		} else {
+			sort.Slice(chirpArray, func(i, j int) bool { return chirpArray[i].CreatedAt.Before(chirpArray[j].CreatedAt) })
 		}
 
 		dat, err := json.Marshal(chirpArray)
